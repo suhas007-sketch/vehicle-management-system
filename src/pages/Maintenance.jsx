@@ -252,8 +252,12 @@ export default function Maintenance() {
                 vehicleService.getAll(),
             ]);
             setLogs(logsData);
-            setCalendar(calData);
             setVehicles(vehiclesData);
+            // Auto-sync: ensure every maintenance vehicle has a calendar entry
+            await maintenanceService.syncCalendarForMaintenanceVehicles(vehiclesData);
+            // Re-fetch calendar after sync to include any newly created entries
+            const freshCal = await maintenanceService.getCalendar();
+            setCalendar(freshCal);
         } catch (err) {
             console.error(err);
             toast.error('Failed to load maintenance data');
@@ -271,8 +275,11 @@ export default function Maintenance() {
                 vehicleService.getAll(),
             ]);
             setLogs(logsData);
-            setCalendar(calData);
             setVehicles(vehiclesData);
+            // Auto-sync calendar entries for maintenance vehicles
+            await maintenanceService.syncCalendarForMaintenanceVehicles(vehiclesData);
+            const freshCal = await maintenanceService.getCalendar();
+            setCalendar(freshCal);
         } catch (err) {
             console.error('[silentRefresh]', err);
         }
@@ -541,22 +548,25 @@ export default function Maintenance() {
                                     return (
                                         <div
                                             key={idx}
-                                            className={`relative aspect-square flex flex-col items-center justify-center rounded-xl text-xs font-black transition-all cursor-default border ${
+                                            className={`relative aspect-square flex flex-col items-center justify-center rounded-xl transition-all cursor-default border overflow-hidden ${
                                                 isBlocked
-                                                    ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                                                    ? 'bg-red-500/10 border-red-500/30'
                                                     : isToday
-                                                    ? 'bg-primary/10 border-primary/30 text-primary'
-                                                    : 'border-white/5 text-textMuted hover:bg-white/5 hover:text-textMain'
+                                                    ? 'bg-primary/10 border-primary/30'
+                                                    : 'border-white/5 hover:bg-white/5'
                                             }`}
-                                            title={entries.map(e => `${e.vehicle_name}: ${e.reason}`).join('\n')}
+                                            title={entries.map(e => `${e.vehicle_name}${e.reason ? ': ' + e.reason : ''}`).join('\n')}
                                         >
-                                            <span>{day}</span>
-                                            {isBlocked && (
-                                                <div className="absolute bottom-1 flex gap-0.5">
-                                                    {entries.slice(0, 3).map((_, i) => (
-                                                        <div key={i} className="w-1 h-1 rounded-full bg-red-400" />
-                                                    ))}
-                                                </div>
+                                            <span className={`text-xs font-black leading-none ${
+                                                isBlocked ? 'text-red-400' : isToday ? 'text-primary' : 'text-textMuted'
+                                            }`}>{day}</span>
+                                            {isBlocked && entries.length > 0 && (
+                                                <span className="mt-0.5 text-[8px] font-black leading-none text-red-400/80">
+                                                    {entries.length === 1
+                                                        ? entries[0].vehicle_name.split(' ')[0]
+                                                        : `${entries.length} veh`
+                                                    }
+                                                </span>
                                             )}
                                         </div>
                                     );
@@ -596,21 +606,32 @@ export default function Maintenance() {
                             ) : (
                                 <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto custom-scrollbar">
                                     {calendar.map((entry) => (
-                                        <div key={entry.id} className="px-6 py-4 flex items-center justify-between group hover:bg-red-500/5 transition-all">
+                                        <div key={entry.id} className="px-6 py-4 flex items-center gap-3 group hover:bg-red-500/5 transition-all">
+                                            {/* Vehicle thumbnail */}
+                                            <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                                                {entry.vehicle_image
+                                                    ? <img src={entry.vehicle_image} alt="" className="w-full h-full object-cover" />
+                                                    : <Hammer className="w-4 h-4 text-amber-500" />
+                                                }
+                                            </div>
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-xs font-black text-textMain italic truncate group-hover:text-red-400 transition-colors">
                                                     {entry.vehicle_name}
                                                 </p>
-                                                <p className="text-[10px] font-bold text-textMuted uppercase tracking-widest mt-0.5 opacity-50">
-                                                    {new Date(entry.unavailable_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                                                </p>
-                                                {entry.reason && (
-                                                    <p className="text-[9px] text-red-400/50 font-bold mt-0.5 truncate">{entry.reason}</p>
-                                                )}
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                    <span className="text-[9px] font-black text-red-400/70 uppercase tracking-widest">
+                                                        {new Date(entry.unavailable_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                                    </span>
+                                                    {entry.reason && (
+                                                        <span className="text-[8px] px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-400/60 font-bold uppercase tracking-wide border border-red-500/10">
+                                                            {entry.reason}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                             <button
                                                 onClick={() => handleDeleteCalEntry(entry.id)}
-                                                className="ml-3 p-2 rounded-xl text-textMuted hover:text-red-400 hover:bg-red-400/10 border border-white/5 transition-all shrink-0"
+                                                className="p-2 rounded-xl text-textMuted hover:text-red-400 hover:bg-red-400/10 border border-white/5 transition-all shrink-0"
                                                 title="Unblock date"
                                             >
                                                 <X className="w-3.5 h-3.5" />

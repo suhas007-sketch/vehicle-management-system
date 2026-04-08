@@ -19,7 +19,8 @@ export const bookingService = {
 
         return data.map(b => ({
             ...b,
-            vehicle_name: b.vehicles?.name || 'Unknown',
+            // Stored column first (auto-set by DB trigger), then fall back to join
+            vehicle_name: b.vehicle_name || b.vehicles?.name || 'Unknown',
             vehicle_brand: b.vehicles?.brand || '',
             vehicle_image: b.vehicles?.image_url || '',
             vehicle_price: b.vehicles?.price_per_day || 0
@@ -45,7 +46,8 @@ export const bookingService = {
 
         return data.map(b => ({
             ...b,
-            vehicle_name: b.vehicles?.name || 'Unknown',
+            // Stored column first (auto-set by DB trigger), then fall back to join
+            vehicle_name: b.vehicle_name || b.vehicles?.name || 'Unknown',
             vehicle_brand: b.vehicles?.brand || '',
             vehicle_image: b.vehicles?.image_url || '',
             vehicle_price: b.vehicles?.price_per_day || 0
@@ -76,6 +78,16 @@ export const bookingService = {
             .from('bookings')
             .update({ status })
             .eq('id', id);
+        if (error) throw error;
+    },
+
+    // Called when a vehicle is returned — marks the active booking as completed
+    async completeByVehicleId(vehicleId) {
+        const { error } = await supabase
+            .from('bookings')
+            .update({ status: 'completed' })
+            .eq('vehicle_id', vehicleId)
+            .in('status', ['pending', 'confirmed', 'active']);
         if (error) throw error;
     }
 };

@@ -48,8 +48,7 @@ export const maintenanceService = {
 
         if (error) throw error;
 
-        // 2. Also block the service date in availability_calendar
-        // (ignore duplicate errors silently)
+        // 2. Block the service date in availability_calendar (ignore duplicates)
         await supabase
             .from('availability_calendar')
             .upsert(
@@ -61,11 +60,10 @@ export const maintenanceService = {
                 { onConflict: 'vehicle_id,unavailable_date', ignoreDuplicates: true }
             );
 
-        // 3. Also set the vehicle status to maintenance
-        await supabase
-            .from('vehicles')
-            .update({ status: 'maintenance' })
-            .eq('id', logData.vehicle_id);
+        // NOTE: We do NOT update vehicle status here.
+        // Updating status would re-fire the DB trigger fn_log_maintenance_event,
+        // creating a duplicate log row. Vehicle status is managed separately
+        // from the Vehicles page (hammer button) which correctly uses vehicleService.updateStatus.
 
         return data;
     },
@@ -171,5 +169,42 @@ export const maintenanceService = {
             .delete()
             .eq('id', id);
         if (error) throw error;
+    },
+
+    /**
+     * Ensures every vehicle currently in 'maintenance' status has at least
+     * one blocked date in availability_calendar. Runs silently on page load.
+     */
+    async syncCalendarForMaintenanceVehicles(vehicles) {
+        const today = new Date().toISOString().split('T')[0];
+        const maintenanceVehicles = (vehicles || []).filter(v => v.status === 'maintenance');
+        if (maintenanceVehicles.length === 0) return;
+
+        // Fetch all existing calendar entries for these vehicles
+        const ids = maintenanceVehicles.map(v => v.id);
+        const { data: existingEntries } = await supabase
+            .from('availability_calendar')
+            .select('vehicle_id')
+            .in('vehicle_id', ids);
+
+        const vehiclesWithEntry = new Set((existingEntries || []).map(e => e.vehicle_id));
+
+        // For any maintenance vehicle with NO calendar entry, create one for today
+        const missingEntries = maintenanceVehicles
+            .filter(v => !vehiclesWithEntry.has(v.id))
+            .map(v => ({
+                vehicle_id: v.id,
+                unavailable_date: today,
+                reason: 'Maintenance',
+            }));
+
+        if (missingEntries.length > 0) {
+            await supabase
+                .from('availability_calendar')
+                .upsert(missingEntries, {
+                    onConflict: 'vehicle_id,unavailable_date',
+                    ignoreDuplicates: true,
+                });
+        }
     },
 };

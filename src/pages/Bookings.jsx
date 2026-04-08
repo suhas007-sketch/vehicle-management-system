@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import PageTransition from '../components/layout/PageTransition';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Filter, CalendarCheck, MapPin, Hash, UserCircle } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Filter, CalendarCheck, Hash } from 'lucide-react';
 
 import { TableSkeleton } from '../components/ui/SkeletonLoaders';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -109,14 +109,13 @@ export default function Bookings() {
                             <thead>
                                 <tr className="bg-surface border-b border-white/10">
                                     {[
-                                        { label: 'Booking ID', key: 'id', icon: Hash },
-                                        { label: 'Fleet Machine', key: 'vehicle_name', icon: CalendarCheck },
-                                        { label: 'Operator Details', key: 'customer_name', icon: UserCircle },
-                                        { label: 'Start Cycle', key: 'start_date', icon: null },
-                                        { label: 'Settlement', key: 'total_price', icon: null },
-                                        { label: 'Status', key: 'status', icon: null }
+                                        { label: 'Booking ID',   key: 'id',           icon: Hash },
+                                        { label: 'Vehicle Name', key: 'vehicle_name', icon: CalendarCheck },
+                                        { label: 'Start Date',   key: 'start_date',   icon: null },
+                                        { label: 'End Date',     key: 'end_date',     icon: null },
+                                        { label: 'Amount',       key: 'total_price',  icon: null },
+                                        { label: 'Status',       key: 'status',       icon: null }
                                     ].map((col) => (
-
                                         <th 
                                             key={col.key}
                                             onClick={() => handleSort(col.key)}
@@ -150,40 +149,41 @@ export default function Bookings() {
                                         </tr>
                                     ) : paginatedBookings.map((b) => (
                                         <tr key={b.id} className="hover:bg-primary/5 transition-all group cursor-pointer border-r last:border-r-0 border-white/5">
-                                            <td className="py-8 px-10">
-                                                 <span className="text-[10px] font-black text-textMuted/40 group-hover:text-primary transition-colors tracking-widest uppercase">#{b.id.toString().substring(0,8).toUpperCase()}</span>
+                                            {/* Booking ID */}
+                                            <td className="py-7 px-10">
+                                                <span className="text-[10px] font-black text-textMuted/40 group-hover:text-primary transition-colors tracking-widest uppercase">
+                                                    #{b.id.toString().substring(0,8).toUpperCase()}
+                                                </span>
                                             </td>
-                                            <td className="py-8 px-10">
-                                                <div className="flex items-center gap-5">
-                                                    <div className="w-12 h-12 rounded-2xl bg-surface border border-white/10 flex items-center justify-center overflow-hidden shrink-0 group-hover:scale-110 transition-transform">
-                                                         <img src={b.vehicle_image} alt="" className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-[10px] text-textMuted font-black uppercase tracking-widest">{b.vehicle_brand}</span>
-                                                        <h5 className="font-black text-sm text-textMain group-hover:text-primary transition-colors italic uppercase tracking-tight">{b.vehicle_name}</h5>
-                                                    </div>
+                                            {/* Vehicle Name */}
+                                            <td className="py-7 px-10">
+                                                <div>
+                                                    <p className="text-[10px] text-textMuted font-black uppercase tracking-widest">
+                                                        {b.vehicle_brand || '—'}
+                                                    </p>
+                                                    <h5 className="font-black text-sm text-textMain group-hover:text-primary transition-colors italic uppercase tracking-tight mt-0.5">
+                                                        {b.vehicle_name || 'Unknown Vehicle'}
+                                                    </h5>
                                                 </div>
                                             </td>
-                                            <td className="py-8 px-10">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-2 h-2 rounded-full bg-green-500/40" />
-                                                    <span className="text-xs text-textMain font-black tracking-tight italic">
-                                                        {b.customer_name || 'System Operator'}
-                                                    </span>
-                                                </div>
-                                                <p className="text-[10px] text-textMuted mt-1 font-bold uppercase tracking-widest opacity-40">UID: {b.customer_id?.substring(0,6)}</p>
+                                            {/* Start Date */}
+                                            <td className="py-7 px-10 text-xs font-bold text-textMuted uppercase tracking-widest">
+                                                {b.start_date ? new Date(b.start_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase() : '—'}
                                             </td>
-                                            <td className="py-8 px-10 text-xs font-bold text-textMuted uppercase tracking-widest">
-                                                {new Date(b.start_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase()}
+                                            {/* End Date */}
+                                            <td className="py-7 px-10 text-xs font-bold text-textMuted uppercase tracking-widest">
+                                                {b.end_date ? new Date(b.end_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase() : '—'}
                                             </td>
-                                            <td className="py-8 px-10">
+                                            {/* Amount */}
+                                            <td className="py-7 px-10">
                                                 <span className="text-base font-black text-textMain italic">{formatINR(b.total_price)}</span>
-                                                <p className="text-[10px] text-textMuted font-black uppercase tracking-widest opacity-40 mt-1 italic">Confirmed</p>
                                             </td>
-                                            <td className="py-8 px-10">
-                                                <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] border shadow-glow-sm ${
-                                                    b.status === 'Active' || b.status === 'confirmed' ? 'bg-primary/10 text-primary border-primary/20' :
-                                                    b.status === 'Completed' || b.status === 'returned' ? 'bg-green-400/10 text-green-400 border-green-400/20' :
+                                            {/* Status */}
+                                            <td className="py-7 px-10">
+                                                <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] border ${
+                                                    b.status === 'active' || b.status === 'confirmed' ? 'bg-primary/10 text-primary border-primary/20' :
+                                                    b.status === 'completed' ? 'bg-green-400/10 text-green-400 border-green-400/20' :
+                                                    b.status === 'cancelled' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
                                                     'bg-white/5 border-white/10 text-textMuted'
                                                 }`}>
                                                     {b.status}

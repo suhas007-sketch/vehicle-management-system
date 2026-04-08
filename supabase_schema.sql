@@ -1,14 +1,21 @@
 -- ==========================================
--- VRMS PRODUCTION SCHEMA (V8.0)
--- 9-TABLE SYSTEM (vehicle_subtypes REMOVED)
+-- VRMS PRODUCTION SCHEMA (V9.0)
 -- ==========================================
 -- SAFE TO RE-RUN (Cleans app tables first)
 -- Author: Antigravity AI
--- Updated: 2026-04-08
+-- Updated: 2026-04-09
 -- ==========================================
 
 -- 0. SAFE CLEANUP (ONLY TABLES WE OWN)
+-- Drop any old zombie triggers on auth.users FIRST to prevent 500 on signup
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP TRIGGER IF EXISTS handle_new_user ON auth.users;
+DROP TRIGGER IF EXISTS tr_on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
+DROP FUNCTION IF EXISTS public.fn_handle_new_user() CASCADE;
+
 DELETE FROM auth.users;
+
 DROP VIEW IF EXISTS public.recommended_vehicles CASCADE;
 DROP TABLE IF EXISTS public.vehicle_reviews CASCADE;
 DROP TABLE IF EXISTS public.maintenance_logs CASCADE;
@@ -29,17 +36,40 @@ DO $$ BEGIN
     CREATE TYPE public.booking_status_enum AS ENUM ('pending', 'confirmed', 'active', 'completed', 'cancelled');
 EXCEPTION WHEN duplicate_object THEN null; END $$;
 
--- 3. USER PROFILES (SAFE FOR SUPABASE)
+-- 3. USER PROFILES TABLE
+-- Stores display info for each registered user.
+-- id must match auth.users.id (set by trigger below).
 CREATE TABLE public.user_profiles (
-    id UUID PRIMARY KEY, -- Matches auth.users.id
-    email TEXT UNIQUE,
-    full_name TEXT,
-    role TEXT DEFAULT 'user',
-    avatar TEXT,
-    bio TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    id          UUID PRIMARY KEY,              -- same as auth.users.id
+    email       TEXT,
+    full_name   TEXT,
+    avatar      TEXT,
+    role        TEXT DEFAULT 'user',
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now()
 );
+
+-- 3a. Auto-create profile row when a new auth user signs up
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.user_profiles (id, email, full_name, role, created_at, updated_at)
+    VALUES (
+        NEW.id,
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+        'user',
+        now(),
+        now()
+    )
+    ON CONFLICT (id) DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- 4. VEHICLE CATEGORIES (lookup table, no subtypes)
 CREATE TABLE public.vehicle_categories (
@@ -70,19 +100,14 @@ CREATE TABLE public.vehicles (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE public.vehicle_images (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
-    url TEXT NOT NULL,
-    is_primary BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
+-- vehicle_images table removed — image_url is stored directly on the vehicles table
 
 -- 6. CORE BOOKING ENGINE
 CREATE TABLE public.bookings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
-    customer_id UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    vehicle_name TEXT,                         -- denormalized for reliable display
+    customer_id UUID,                          -- references auth.users.id (no FK)
     customer_name TEXT,
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
@@ -105,7 +130,8 @@ CREATE TABLE public.availability_calendar (
 CREATE TABLE public.vehicle_reviews (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    user_id UUID,                              -- references auth.users.id (no FK)
+    reviewer_name TEXT DEFAULT 'Anonymous',    -- stored for display
     rating INTEGER CHECK (rating >= 1 AND rating <= 5),
     comment TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
@@ -125,41 +151,17 @@ CREATE TABLE public.maintenance_logs (
 
 -- 10. AUTOMATION FUNCTIONS (DATABASE TRIGGERS)
 
--- Instant Signup Sync
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.user_profiles (id, email, full_name, role)
-    VALUES (
-        NEW.id, 
-        NEW.email, 
-        COALESCE(
-            NEW.raw_user_meta_data ->> 'full_name', 
-            NEW.raw_user_meta_data ->> 'name', 
-            NEW.email
-        ),
-        'user'
-    )
-    ON CONFLICT (id) DO NOTHING;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Safe Trigger on auth.users
-DO $$ BEGIN
-    DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-    CREATE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Skipping trigger (restricted)'; END $$;
-
--- Auto-calculate total price
+-- Auto-calculate total price + denormalize vehicle name
 CREATE OR REPLACE FUNCTION public.fn_calculate_booking_price()
 RETURNS TRIGGER AS $$
-DECLARE v_price NUMERIC;
+DECLARE
+    v_price NUMERIC;
+    v_name  TEXT;
 BEGIN
-    SELECT price_per_day INTO v_price FROM public.vehicles WHERE id = NEW.vehicle_id;
-    NEW.total_price := v_price * (NEW.end_date - NEW.start_date + 1);
+    SELECT price_per_day, name INTO v_price, v_name
+    FROM public.vehicles WHERE id = NEW.vehicle_id;
+    NEW.total_price  := v_price * (NEW.end_date - NEW.start_date + 1);
+    NEW.vehicle_name := v_name;   -- stored so bookings always show the name
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -199,10 +201,14 @@ BEGIN
             NEW.id,
             NEW.name,
             'Routine Maintenance',
-            'Status escalated to maintenance from Fleet Operations module.',
+            'Vehicle status set to maintenance from Fleet Operations.',
             0,
             CURRENT_DATE
         );
+        -- Also block today in availability_calendar (atomic with the log insert)
+        INSERT INTO public.availability_calendar (vehicle_id, unavailable_date, reason)
+        VALUES (NEW.id, CURRENT_DATE, 'Maintenance')
+        ON CONFLICT (vehicle_id, unavailable_date) DO NOTHING;
     END IF;
     RETURN NEW;
 END;
@@ -213,6 +219,27 @@ CREATE TRIGGER tr_log_maintenance_event
 AFTER UPDATE ON public.vehicles
 FOR EACH ROW
 EXECUTE FUNCTION public.fn_log_maintenance_event();
+
+-- Auto-complete booking when vehicle is returned to 'available'
+CREATE OR REPLACE FUNCTION public.fn_complete_booking_on_return()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Only fire when vehicle transitions from 'rented' -> 'available'
+    IF NEW.status = 'available' AND OLD.status = 'rented' THEN
+        UPDATE public.bookings
+        SET status = 'completed'
+        WHERE vehicle_id = NEW.id
+          AND status IN ('pending', 'confirmed', 'active');
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS tr_complete_booking_on_return ON public.vehicles;
+CREATE TRIGGER tr_complete_booking_on_return
+AFTER UPDATE ON public.vehicles
+FOR EACH ROW
+EXECUTE FUNCTION public.fn_complete_booking_on_return();
 
 -- 11. SMART VIEWS
 CREATE OR REPLACE VIEW public.recommended_vehicles AS
@@ -234,29 +261,36 @@ ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.maintenance_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.availability_calendar ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vehicle_reviews ENABLE ROW LEVEL SECURITY;
+
+-- User Profiles
+CREATE POLICY "Users can view own profile"   ON public.user_profiles FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users can insert own profile" ON public.user_profiles FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON public.user_profiles FOR UPDATE USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
 -- Vehicles
-CREATE POLICY "Public Read Vehicles" ON public.vehicles FOR SELECT USING (true);
+CREATE POLICY "Public Read Vehicles"          ON public.vehicles FOR SELECT USING (true);
 CREATE POLICY "Authenticated Update Vehicles" ON public.vehicles FOR UPDATE USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
 CREATE POLICY "Authenticated Insert Vehicles" ON public.vehicles FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 CREATE POLICY "Authenticated Delete Vehicles" ON public.vehicles FOR DELETE USING (auth.uid() IS NOT NULL);
 
--- User Profiles
-CREATE POLICY "Manage Own Profile" ON public.user_profiles FOR ALL USING (auth.uid() = id);
-CREATE POLICY "Public Read Profiles" ON public.user_profiles FOR SELECT USING (true);
-
 -- Bookings
 CREATE POLICY "Create Own Bookings" ON public.bookings FOR INSERT WITH CHECK (auth.uid() = customer_id);
-CREATE POLICY "View All Bookings" ON public.bookings FOR SELECT USING (auth.uid() IS NOT NULL);
-CREATE POLICY "Update Bookings" ON public.bookings FOR UPDATE USING (auth.uid() IS NOT NULL);
+CREATE POLICY "View All Bookings"   ON public.bookings FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "Update Bookings"     ON public.bookings FOR UPDATE USING (auth.uid() IS NOT NULL);
 
 -- Maintenance Logs (authenticated users can do all — admins manage fleet)
-CREATE POLICY "View Maintenance Logs" ON public.maintenance_logs FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "View Maintenance Logs"   ON public.maintenance_logs FOR SELECT USING (auth.uid() IS NOT NULL);
 CREATE POLICY "Insert Maintenance Logs" ON public.maintenance_logs FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 CREATE POLICY "Delete Maintenance Logs" ON public.maintenance_logs FOR DELETE USING (auth.uid() IS NOT NULL);
 
+-- Vehicle Reviews
+CREATE POLICY "Public Read Reviews"  ON public.vehicle_reviews FOR SELECT USING (true);
+CREATE POLICY "Public Insert Reviews" ON public.vehicle_reviews FOR INSERT WITH CHECK (true);
+CREATE POLICY "Delete Own Reviews"   ON public.vehicle_reviews FOR DELETE USING (auth.uid() = user_id);
+
 -- Availability Calendar
-CREATE POLICY "Public Read Calendar" ON public.availability_calendar FOR SELECT USING (true);
+CREATE POLICY "Public Read Calendar"       ON public.availability_calendar FOR SELECT USING (true);
 CREATE POLICY "Authenticated Manage Calendar" ON public.availability_calendar FOR ALL USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
 
 -- 13. SEED VEHICLE CATEGORIES
@@ -326,9 +360,3 @@ INSERT INTO public.vehicles (name, brand, category, subtype, price_per_day, fuel
 UPDATE public.vehicles SET image_url = 'https://images.unsplash.com/photo-1621245023072-454462151bae' WHERE brand = 'Mahindra' AND name = 'Thar';
 UPDATE public.vehicles SET image_url = 'https://images.unsplash.com/photo-1619767886558-efdc259cde1a' WHERE brand = 'Tata' AND name = 'Nexon';
 UPDATE public.vehicles SET image_url = 'https://images.unsplash.com/photo-1549317661-bd32c860f2b5' WHERE brand = 'Honda' AND name = 'Activa 6G';
-
--- 16. BACKFILL: Ensure existing auth users have profiles
-INSERT INTO public.user_profiles (id, email, full_name, role, created_at)
-SELECT id, email, COALESCE(raw_user_meta_data ->> 'full_name', email), 'user', created_at
-FROM auth.users
-ON CONFLICT (id) DO NOTHING;

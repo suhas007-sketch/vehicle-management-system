@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Shield, LayoutDashboard } from 'lucide-react';
+import { Shield } from 'lucide-react';
 
 export default function LandingNav() {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -48,13 +48,6 @@ export default function LandingNav() {
             className="text-sm font-medium text-white hover:text-primary transition-colors px-4 py-2"
           >
             Sign In
-          </Link>
-          <Link 
-            to="/dashboard" 
-            className="flex items-center gap-2 bg-primary hover:bg-blue-600 text-white px-5 py-2.5 rounded-full text-sm font-semibold transition-all btn-glow"
-          >
-            <LayoutDashboard className="w-4 h-4" />
-            Dashboard
           </Link>
         </div>
       </div>

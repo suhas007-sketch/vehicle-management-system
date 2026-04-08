@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Filter, Plus, Edit3, Trash2, LayoutGrid, List, Flame, Search as SearchIcon, IndianRupee, Hammer, RotateCcw, CalendarCheck } from 'lucide-react';
+import { Filter, Plus, Edit3, Trash2, LayoutGrid, List, Flame, Search as SearchIcon, IndianRupee, Hammer, RotateCcw, CalendarCheck, Star } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import PageTransition from '../components/layout/PageTransition';
 import VehicleModal from '../components/ui/VehicleModal';
 import BookingModal from '../components/ui/BookingModal';
+import VehicleReviewPanel from '../components/ui/VehicleReviewPanel';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { VehicleCardSkeleton } from '../components/ui/SkeletonLoaders';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ImageWithFallback } from '../components/ui/ImageWithFallback';
 import toast from 'react-hot-toast';
 import { vehicleService } from '../services/vehicleService';
+import { bookingService } from '../services/bookingService';
 import { formatINR } from '../lib/formatters';
 
 
@@ -27,6 +29,8 @@ export default function Vehicles() {
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState(null);
   const [selectedVehicleForBooking, setSelectedVehicleForBooking] = useState(null);
+  const [selectedVehicleForReview, setSelectedVehicleForReview] = useState(null);
+  const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
   
   const [viewMode, setViewMode] = useState('grid');
   
@@ -89,10 +93,14 @@ export default function Vehicles() {
   const handleReturnAction = async (id) => {
     const loadingToast = toast.loading('Processing vehicle return...');
     try {
+        // Step 1: Mark the active booking as 'completed' in the bookings table
+        await bookingService.completeByVehicleId(id);
+        // Step 2: Update vehicle status to 'available'
         await vehicleService.updateStatus(id, 'available');
         toast.success('Vehicle successfully returned to fleet', { id: loadingToast });
         fetchVehicles();
     } catch (err) {
+        console.error('[Return] Failed to return vehicle:', err);
         toast.error('Failed to return vehicle', { id: loadingToast });
     }
   };
@@ -267,69 +275,82 @@ export default function Vehicles() {
                 </div>
               </div>
               
-              <CardContent className={`relative z-20 flex-1 flex flex-col justify-between ${viewMode === 'grid' ? "p-6" : "p-8 flex-row items-center w-full"}`}>
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <div>
+              <CardContent className={`relative z-20 flex-1 flex flex-col justify-between ${viewMode === 'grid' ? "p-6" : "p-6 md:p-8"}`}>
+                {/* Vehicle info */}
+                <div className={`flex-1 ${viewMode === 'list' ? 'flex items-center gap-6' : ''}`}>
+                  <div className={`flex justify-between items-start ${viewMode === 'list' ? 'flex-1 min-w-0' : ''}`}>
+                    <div className="min-w-0">
                         <p className="text-[10px] text-textMuted uppercase font-black tracking-[0.2em] mb-1">{vehicle.brand}</p>
                         <h3 className="font-black text-xl text-textMain group-hover:text-primary transition-colors line-clamp-1 italic tracking-tight">{vehicle.name}</h3>
+                        <div className="flex items-center gap-3 mt-3">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/5 rounded-xl">
+                                <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                <p className="text-[10px] text-textMuted uppercase font-black tracking-widest">{vehicle.subtype}</p>
+                            </div>
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/5 rounded-xl">
+                                <p className="text-[10px] text-textMuted uppercase font-black tracking-widest">{vehicle.fuel_type}</p>
+                            </div>
+                        </div>
                     </div>
                     {viewMode === 'grid' && (
-                        <div className="text-right">
+                        <div className="text-right shrink-0 ml-2">
                             <p className="text-xl font-black text-textMain italic leading-none">{formatINR(vehicle.price_per_day)}</p>
                             <p className="text-[10px] text-textMuted uppercase font-black mt-1 opacity-40">PER DAY</p>
                         </div>
                     )}
                   </div>
-                  
-                  <div className="flex items-center gap-3 mt-4">
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/5 rounded-xl">
-                          <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-                          <p className="text-[10px] text-textMuted uppercase font-black tracking-widest">{vehicle.subtype}</p>
+
+                  {viewMode === 'list' && (
+                       <div className="text-center px-8 shrink-0 border-x border-white/5">
+                          <p className="text-2xl font-black text-textMain italic leading-none">{formatINR(vehicle.price_per_day)}</p>
+                          <p className="text-[10px] text-textMuted uppercase font-black mt-2 tracking-widest opacity-40">DAILY RATE</p>
                       </div>
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/5 rounded-xl">
-                          <p className="text-[10px] text-textMuted uppercase font-black tracking-widest">{vehicle.fuel_type}</p>
-                      </div>
-                  </div>
+                  )}
                 </div>
-                
-                {viewMode === 'list' && (
-                     <div className="text-center px-12 shrink-0 border-x border-white/5">
-                        <p className="text-3xl font-black text-textMain italic leading-none">{formatINR(vehicle.price_per_day)}</p>
-                        <p className="text-[10px] text-textMuted uppercase font-black mt-2 tracking-widest opacity-40">DAILY RATE</p>
-                    </div>
-                )}
 
-                <div className={`flex items-center gap-3 ${viewMode === 'grid' ? "mt-8 pt-6 border-t border-white/5" : "pl-12"}`}>
-                    <div className="flex-1 flex gap-2">
-                        {vehicle.status === 'available' ? (
-                            <Button size="sm" className="flex-1 h-11 rounded-2xl gap-2 shadow-glow" onClick={() => openBooking(vehicle)}>
-                                <CalendarCheck className="w-4 h-4" /> <span className="font-extrabold italic uppercase tracking-wider">Book Now</span>
+                {/* Actions + Reviews — always in a vertical stack, never overlapping */}
+                <div className={`flex flex-col gap-3 ${viewMode === 'grid' ? 'mt-8 pt-6 border-t border-white/5' : 'mt-4 pt-4 border-t border-white/5'}`}>
+                    {/* Action Buttons Row */}
+                    <div className="flex items-center gap-2 w-full">
+                        <div className="flex-1 flex gap-2 min-w-0">
+                            {vehicle.status === 'available' ? (
+                                <Button size="sm" className="flex-1 h-11 rounded-2xl gap-2 shadow-glow" onClick={() => openBooking(vehicle)}>
+                                    <CalendarCheck className="w-4 h-4" /> <span className="font-extrabold italic uppercase tracking-wider">Book Now</span>
+                                </Button>
+                            ) : vehicle.status === 'rented' ? (
+                                <Button size="sm" variant="outline" className="flex-1 h-11 rounded-2xl gap-2 border-primary/20 text-primary hover:bg-primary/10" onClick={() => handleReturnAction(vehicle.id)}>
+                                    <RotateCcw className="w-4 h-4" /> <span className="font-extrabold italic uppercase tracking-wider">Process Return</span>
+                                </Button>
+                            ) : (
+                                <Button size="sm" variant="ghost" className="flex-1 h-11 rounded-2xl gap-2 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20" onClick={() => handleUpdateStatus(vehicle.id, 'available')}>
+                                    <span className="font-extrabold italic uppercase tracking-wider">Restore Service</span>
+                                </Button>
+                            )}
+                        </div>
+
+                        <div className="flex gap-2 shrink-0">
+                            <Button variant="ghost" size="sm" className="w-11 h-11 p-0 text-textMuted hover:text-textMain hover:bg-white/5 border border-white/10 rounded-2xl transition-all" onClick={() => handleEdit(vehicle)} title="Edit Machine Specs">
+                                <Edit3 className="w-4 h-4" />
                             </Button>
-                        ) : vehicle.status === 'rented' ? (
-                            <Button size="sm" variant="outline" className="flex-1 h-11 rounded-2xl gap-2 border-primary/20 text-primary hover:bg-primary/10" onClick={() => handleReturnAction(vehicle.id)}>
-                                <RotateCcw className="w-4 h-4" /> <span className="font-extrabold italic uppercase tracking-wider">Process Return</span>
+                            {vehicle.status === 'available' && (
+                                <Button variant="ghost" size="sm" className="w-11 h-11 p-0 text-textMuted hover:text-amber-500 hover:bg-amber-500/5 border border-white/10 rounded-2xl transition-all" onClick={() => handleUpdateStatus(vehicle.id, 'maintenance')} title="Send to Maintenance">
+                                    <Hammer className="w-4 h-4" />
+                                </Button>
+                            )}
+                            <Button variant="ghost" size="sm" className="w-11 h-11 p-0 text-textMuted hover:text-red-500 hover:bg-red-500/10 border border-white/10 rounded-2xl transition-all" onClick={() => setConfirmDelete({ isOpen: true, id: vehicle.id })} title="Decommission Machine">
+                                <Trash2 className="w-4 h-4" />
                             </Button>
-                        ) : (
-                            <Button size="sm" variant="ghost" className="flex-1 h-11 rounded-2xl gap-2 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20" onClick={() => handleUpdateStatus(vehicle.id, 'available')}>
-                                <span className="font-extrabold italic uppercase tracking-wider">Restore Service</span>
-                            </Button>
-                        )}
+                        </div>
                     </div>
 
-                    <div className="flex gap-2">
-                        <Button variant="ghost" size="sm" className="w-11 h-11 p-0 text-textMuted hover:text-textMain hover:bg-white/5 border border-white/10 rounded-2xl transition-all" onClick={() => handleEdit(vehicle)} title="Edit Machine Specs">
-                            <Edit3 className="w-4 h-4" />
-                        </Button>
-                        {vehicle.status === 'available' && (
-                            <Button variant="ghost" size="sm" className="w-11 h-11 p-0 text-textMuted hover:text-amber-500 hover:bg-amber-500/5 border border-white/10 rounded-2xl transition-all" onClick={() => handleUpdateStatus(vehicle.id, 'maintenance')} title="Send to Maintenance">
-                                <Hammer className="w-4 h-4" />
-                            </Button>
-                        )}
-                        <Button variant="ghost" size="sm" className="w-11 h-11 p-0 text-textMuted hover:text-red-500 hover:bg-red-500/10 border border-white/10 rounded-2xl transition-all" onClick={() => setConfirmDelete({ isOpen: true, id: vehicle.id })} title="Decommission Machine">
-                            <Trash2 className="w-4 h-4" />
-                        </Button>
-                    </div>
+                    {/* Reviews Button — always below action row, never overlapping */}
+                    <button
+                        onClick={() => { setSelectedVehicleForReview(vehicle); setIsReviewPanelOpen(true); }}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-textMuted hover:text-primary hover:border-primary/20 hover:bg-primary/5 transition-all text-[10px] font-black uppercase tracking-[0.2em]"
+                    >
+                        <Star className="w-3.5 h-3.5" />
+                        Reviews
+                    </button>
                 </div>
               </CardContent>
             </Card>
@@ -366,6 +387,12 @@ export default function Vehicles() {
             onVehicleAdded={fetchVehicles}
           />
       )}
+
+      <VehicleReviewPanel
+        isOpen={isReviewPanelOpen}
+        onClose={() => { setIsReviewPanelOpen(false); setSelectedVehicleForReview(null); }}
+        vehicle={selectedVehicleForReview}
+      />
     </PageTransition>
   );
 }
