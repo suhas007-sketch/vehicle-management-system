@@ -11,6 +11,7 @@ import Bookings from './pages/Bookings';
 import Customers from './pages/Customers';
 import Settings from './pages/Settings';
 import Landing from './pages/Landing';
+import Maintenance from './pages/Maintenance';
 import FullScreenLoader from './components/ui/FullScreenLoader';
 
 
@@ -65,6 +66,7 @@ function App() {
             <Route path="vehicles" element={<Vehicles />} />
             <Route path="bookings" element={<Bookings />} />
             <Route path="customers" element={<Customers />} />
+            <Route path="maintenance" element={<Maintenance />} />
             <Route path="settings" element={<Settings />} />
           </Route>
           {/* Catch-all */}

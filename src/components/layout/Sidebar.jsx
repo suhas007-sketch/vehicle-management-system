@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom';
 import { AuthContext } from '../../context/AuthContext';
-import { LayoutDashboard, Car, CalendarCheck, Users, Settings, LogOut, Zap } from 'lucide-react';
+import { LayoutDashboard, Car, CalendarCheck, Users, Settings, LogOut, Zap, Wrench } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'framer-motion';
 
@@ -10,6 +10,7 @@ const navItems = [
   { name: 'Vehicles', path: '/app/vehicles', icon: Car },
   { name: 'Bookings', path: '/app/bookings', icon: CalendarCheck },
   { name: 'Customers', path: '/app/customers', icon: Users },
+  { name: 'Maintenance', path: '/app/maintenance', icon: Wrench },
   { name: 'Settings', path: '/app/settings', icon: Settings },
 ];
 

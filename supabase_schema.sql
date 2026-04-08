@@ -1,14 +1,13 @@
 -- ==========================================
--- VRMS ULTIMATE PRODUCTION SCHEMA (V7.0)
--- 10-TABLE PROFESSIONAL SYSTEM
+-- VRMS PRODUCTION SCHEMA (V8.0)
+-- 9-TABLE SYSTEM (vehicle_subtypes REMOVED)
 -- ==========================================
 -- SAFE TO RE-RUN (Cleans app tables first)
 -- Author: Antigravity AI
--- Date: 2026-04-01
+-- Updated: 2026-04-08
 -- ==========================================
 
 -- 0. SAFE CLEANUP (ONLY TABLES WE OWN)
--- Using CASCADE to clear dependent views (like recommended_vehicles)
 DELETE FROM auth.users;
 DROP VIEW IF EXISTS public.recommended_vehicles CASCADE;
 DROP TABLE IF EXISTS public.vehicle_reviews CASCADE;
@@ -31,7 +30,6 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 -- 3. USER PROFILES (SAFE FOR SUPABASE)
--- We strictly avoid public.users and use this for all app data
 CREATE TABLE public.user_profiles (
     id UUID PRIMARY KEY, -- Matches auth.users.id
     email TEXT UNIQUE,
@@ -43,7 +41,7 @@ CREATE TABLE public.user_profiles (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 4. ORGANIZATION TABLES
+-- 4. VEHICLE CATEGORIES (lookup table, no subtypes)
 CREATE TABLE public.vehicle_categories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT UNIQUE NOT NULL,
@@ -51,21 +49,13 @@ CREATE TABLE public.vehicle_categories (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE public.vehicle_subtypes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    category_id UUID REFERENCES public.vehicle_categories(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(category_id, name)
-);
-
--- 5. THE FLEET
+-- 5. THE FLEET (subtype is TEXT column, no separate table needed)
 CREATE TABLE public.vehicles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     brand TEXT NOT NULL,
     category TEXT NOT NULL,
-    subtype TEXT NOT NULL,
+    subtype TEXT,                         -- plain text, no FK to vehicle_subtypes
     price_per_day NUMERIC NOT NULL,
     image_url TEXT,
     fuel_type TEXT,
@@ -102,8 +92,7 @@ CREATE TABLE public.bookings (
     CONSTRAINT valid_dates CHECK (end_date >= start_date)
 );
 
--- 7. ADVANCED MODULES
-
+-- 7. AVAILABILITY CALENDAR
 CREATE TABLE public.availability_calendar (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
@@ -112,6 +101,7 @@ CREATE TABLE public.availability_calendar (
     UNIQUE(vehicle_id, unavailable_date)
 );
 
+-- 8. VEHICLE REVIEWS
 CREATE TABLE public.vehicle_reviews (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
@@ -121,17 +111,19 @@ CREATE TABLE public.vehicle_reviews (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 9. MAINTENANCE LOGS
 CREATE TABLE public.maintenance_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
     vehicle_name TEXT,
     service_type TEXT NOT NULL,
     description TEXT,
-    cost NUMERIC,
-    service_date DATE DEFAULT current_date
+    cost NUMERIC DEFAULT 0,
+    service_date DATE DEFAULT current_date,
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 8. AUTOMATION FUNCTIONS (DATABASE TRIGGERS)
+-- 10. AUTOMATION FUNCTIONS (DATABASE TRIGGERS)
 
 -- Instant Signup Sync
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -177,7 +169,7 @@ CREATE TRIGGER tr_calculate_booking_price
 BEFORE INSERT ON public.bookings
 FOR EACH ROW EXECUTE FUNCTION public.fn_calculate_booking_price();
 
--- Auto-update fleet counts
+-- Auto-update fleet counts on booking
 CREATE OR REPLACE FUNCTION public.fn_update_vehicle_on_booking()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -196,13 +188,21 @@ FOR EACH ROW
 WHEN (NEW.status = 'confirmed' OR NEW.status = 'active' OR NEW.status = 'pending')
 EXECUTE FUNCTION public.fn_update_vehicle_on_booking();
 
--- Auto-inject Maintenance Logs
+-- Auto-inject Maintenance Logs when vehicle is set to maintenance
 CREATE OR REPLACE FUNCTION public.fn_log_maintenance_event()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.status = 'maintenance' AND OLD.status != 'maintenance' THEN
+    -- Only log when transitioning INTO maintenance status
+    IF NEW.status = 'maintenance' AND (OLD.status IS DISTINCT FROM 'maintenance') THEN
         INSERT INTO public.maintenance_logs (vehicle_id, vehicle_name, service_type, description, cost, service_date)
-        VALUES (NEW.id, NEW.name, 'Routine Maintenance', 'Status directly escalated to maintenance from Fleet Operations module.', 0, CURRENT_DATE);
+        VALUES (
+            NEW.id,
+            NEW.name,
+            'Routine Maintenance',
+            'Status escalated to maintenance from Fleet Operations module.',
+            0,
+            CURRENT_DATE
+        );
     END IF;
     RETURN NEW;
 END;
@@ -214,7 +214,7 @@ AFTER UPDATE ON public.vehicles
 FOR EACH ROW
 EXECUTE FUNCTION public.fn_log_maintenance_event();
 
--- 9. SMART VIEWS
+-- 11. SMART VIEWS
 CREATE OR REPLACE VIEW public.recommended_vehicles AS
 SELECT 
     v.*,
@@ -228,22 +228,41 @@ SELECT
 FROM public.vehicles v
 ORDER BY priority_score DESC;
 
--- 10. SECURITY (RLS)
+-- 12. SECURITY (RLS)
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.maintenance_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.availability_calendar ENABLE ROW LEVEL SECURITY;
 
+-- Vehicles
 CREATE POLICY "Public Read Vehicles" ON public.vehicles FOR SELECT USING (true);
-CREATE POLICY "Enable updates for active managers" ON public.vehicles FOR UPDATE USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
-CREATE POLICY "Enable inserts for active managers" ON public.vehicles FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
-CREATE POLICY "Enable deletes for active managers" ON public.vehicles FOR DELETE USING (auth.uid() IS NOT NULL);
-CREATE POLICY "Manage Own Profile" ON public.user_profiles FOR ALL USING (auth.uid() = id);
-CREATE POLICY "Create Own Bookings" ON public.bookings FOR INSERT WITH CHECK (auth.uid() = customer_id);
-CREATE POLICY "View Own Bookings" ON public.bookings FOR SELECT USING (auth.uid() = customer_id);
+CREATE POLICY "Authenticated Update Vehicles" ON public.vehicles FOR UPDATE USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Authenticated Insert Vehicles" ON public.vehicles FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Authenticated Delete Vehicles" ON public.vehicles FOR DELETE USING (auth.uid() IS NOT NULL);
 
--- 11. BIG DATA SEED (50+ PREMIUM VEHICLES)
+-- User Profiles
+CREATE POLICY "Manage Own Profile" ON public.user_profiles FOR ALL USING (auth.uid() = id);
+CREATE POLICY "Public Read Profiles" ON public.user_profiles FOR SELECT USING (true);
+
+-- Bookings
+CREATE POLICY "Create Own Bookings" ON public.bookings FOR INSERT WITH CHECK (auth.uid() = customer_id);
+CREATE POLICY "View All Bookings" ON public.bookings FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "Update Bookings" ON public.bookings FOR UPDATE USING (auth.uid() IS NOT NULL);
+
+-- Maintenance Logs (authenticated users can do all — admins manage fleet)
+CREATE POLICY "View Maintenance Logs" ON public.maintenance_logs FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "Insert Maintenance Logs" ON public.maintenance_logs FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Delete Maintenance Logs" ON public.maintenance_logs FOR DELETE USING (auth.uid() IS NOT NULL);
+
+-- Availability Calendar
+CREATE POLICY "Public Read Calendar" ON public.availability_calendar FOR SELECT USING (true);
+CREATE POLICY "Authenticated Manage Calendar" ON public.availability_calendar FOR ALL USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
+
+-- 13. SEED VEHICLE CATEGORIES
 INSERT INTO public.vehicle_categories (name) VALUES ('Car'), ('Bike'), ('Scooty') ON CONFLICT DO NOTHING;
 
+-- 14. BIG DATA SEED (50+ PREMIUM VEHICLES)
 INSERT INTO public.vehicles (name, brand, category, subtype, price_per_day, fuel_type, transmission, is_featured, is_bestseller, rating) VALUES
 -- Mahindra Premium
 ('Scorpio N', 'Mahindra', 'Car', 'SUV', 3500, 'Diesel', 'Auto', true, true, 4.8),
@@ -269,7 +288,7 @@ INSERT INTO public.vehicles (name, brand, category, subtype, price_per_day, fuel
 ('C-Class', 'Mercedes-Benz', 'Car', 'Luxury', 16000, 'Diesel', 'Auto', true, false, 4.8),
 ('E-Class LWB', 'Mercedes-Benz', 'Car', 'Luxury', 22000, 'Diesel', 'Auto', true, true, 4.9),
 ('A6', 'Audi', 'Car', 'Luxury', 14000, 'Petrol', 'Auto', false, false, 4.7),
--- Bikes Premium
+-- Bikes
 ('Himalayan 450', 'Royal Enfield', 'Bike', 'Adventure', 1500, 'Petrol', 'Manual', true, true, 4.8),
 ('Classic 350', 'Royal Enfield', 'Bike', 'Cruiser', 1200, 'Petrol', 'Manual', false, true, 4.7),
 ('Interceptor 650', 'Royal Enfield', 'Bike', 'Cruiser', 2500, 'Petrol', 'Manual', true, false, 4.9),
@@ -280,13 +299,13 @@ INSERT INTO public.vehicles (name, brand, category, subtype, price_per_day, fuel
 ('Super Meteor 650', 'Royal Enfield', 'Bike', 'Cruiser', 3500, 'Petrol', 'Manual', true, false, 4.9),
 ('ZX-10R', 'Kawasaki', 'Bike', 'Superbike', 12000, 'Petrol', 'Manual', true, false, 4.9),
 ('Tiger 900', 'Triumph', 'Bike', 'Adventure', 9500, 'Petrol', 'Manual', true, false, 4.9),
--- Budget & Scooty
+-- Scooty
 ('S1 Pro', 'Ola Electric', 'Scooty', 'Electric', 800, 'Electric', 'Auto', true, true, 4.7),
 ('Activa 6G', 'Honda', 'Scooty', 'Family', 700, 'Petrol', 'Auto', false, true, 4.5),
 ('Jupiter XL', 'TVS', 'Scooty', 'Family', 680, 'Petrol', 'Auto', false, false, 4.4),
 ('Ntorq 125', 'TVS', 'Scooty', 'Sports', 900, 'Petrol', 'Auto', true, true, 4.6),
 ('Chetak', 'Bajaj', 'Scooty', 'Electric', 750, 'Electric', 'Auto', false, true, 4.4),
--- +15 more to reach 50
+-- More Cars
 ('Swift', 'Maruti Suzuki', 'Car', 'Hatchback', 1000, 'Petrol', 'Manual', false, true, 4.5),
 ('Baleno', 'Maruti Suzuki', 'Car', 'Hatchback', 1200, 'Petrol', 'Auto', false, true, 4.4),
 ('Brezza', 'Maruti Suzuki', 'Car', 'SUV', 1500, 'Petrol', 'Auto', false, true, 4.5),
@@ -303,16 +322,12 @@ INSERT INTO public.vehicles (name, brand, category, subtype, price_per_day, fuel
 ('Creta N-Line', 'Hyundai', 'Car', 'SUV', 3000, 'Petrol', 'Auto', true, false, 4.7),
 ('Carens', 'Kia', 'Car', 'MPV', 1800, 'Diesel', 'Auto', false, true, 4.5);
 
--- Update image placeholders (Realistic URLs would come from search, using high quality Unsplash placeholders)
+-- 15. UPDATE IMAGE PLACEHOLDERS
 UPDATE public.vehicles SET image_url = 'https://images.unsplash.com/photo-1621245023072-454462151bae' WHERE brand = 'Mahindra' AND name = 'Thar';
 UPDATE public.vehicles SET image_url = 'https://images.unsplash.com/photo-1619767886558-efdc259cde1a' WHERE brand = 'Tata' AND name = 'Nexon';
 UPDATE public.vehicles SET image_url = 'https://images.unsplash.com/photo-1549317661-bd32c860f2b5' WHERE brand = 'Honda' AND name = 'Activa 6G';
 
--- Comments
-COMMENT ON TABLE public.availability_calendar IS 'Check machine outages here.';
-COMMENT ON TABLE public.user_profiles IS 'Full automation sync from auth.users.';
-
--- BACKFILL: Ensure existing auth users (like the one you are using) have profiles
+-- 16. BACKFILL: Ensure existing auth users have profiles
 INSERT INTO public.user_profiles (id, email, full_name, role, created_at)
 SELECT id, email, COALESCE(raw_user_meta_data ->> 'full_name', email), 'user', created_at
 FROM auth.users

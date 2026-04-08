@@ -362,9 +362,8 @@ export default function Vehicles() {
           <VehicleModal 
             isOpen={isModalOpen}
             onClose={handleCloseModal}
-            vehicleToEdit={editingVehicle}
+            editingVehicle={editingVehicle}
             onVehicleAdded={fetchVehicles}
-            onVehicleUpdated={fetchVehicles}
           />
       )}
     </PageTransition>
