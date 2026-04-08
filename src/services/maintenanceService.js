@@ -30,6 +30,9 @@ export const maintenanceService = {
     },
 
     async addLog(logData) {
+        const serviceDate = logData.service_date || new Date().toISOString().split('T')[0];
+
+        // 1. Insert the maintenance log
         const { data, error } = await supabase
             .from('maintenance_logs')
             .insert([{
@@ -38,21 +41,82 @@ export const maintenanceService = {
                 service_type: logData.service_type,
                 description: logData.description || '',
                 cost: logData.cost || 0,
-                service_date: logData.service_date || new Date().toISOString().split('T')[0],
+                service_date: serviceDate,
             }])
             .select()
             .single();
 
         if (error) throw error;
+
+        // 2. Also block the service date in availability_calendar
+        // (ignore duplicate errors silently)
+        await supabase
+            .from('availability_calendar')
+            .upsert(
+                [{
+                    vehicle_id: logData.vehicle_id,
+                    unavailable_date: serviceDate,
+                    reason: 'Maintenance',
+                }],
+                { onConflict: 'vehicle_id,unavailable_date', ignoreDuplicates: true }
+            );
+
+        // 3. Also set the vehicle status to maintenance
+        await supabase
+            .from('vehicles')
+            .update({ status: 'maintenance' })
+            .eq('id', logData.vehicle_id);
+
         return data;
     },
 
+    /**
+     * Delete a maintenance log AND:
+     *  - Remove matching availability_calendar entries (same vehicle, same date, reason = 'Maintenance')
+     *  - Restore vehicle status to 'available' ONLY if no other maintenance logs exist for that vehicle
+     */
     async deleteLog(id) {
-        const { error } = await supabase
+        // Step 1: fetch the log first so we have vehicle_id + service_date
+        const { data: log, error: fetchErr } = await supabase
+            .from('maintenance_logs')
+            .select('id, vehicle_id, service_date')
+            .eq('id', id)
+            .single();
+
+        if (fetchErr) throw fetchErr;
+
+        const { vehicle_id, service_date } = log;
+
+        // Step 2: delete the log
+        const { error: delErr } = await supabase
             .from('maintenance_logs')
             .delete()
             .eq('id', id);
-        if (error) throw error;
+
+        if (delErr) throw delErr;
+
+        // Step 3: remove the matching calendar entry for this vehicle + date (maintenance-reason only)
+        await supabase
+            .from('availability_calendar')
+            .delete()
+            .eq('vehicle_id', vehicle_id)
+            .eq('unavailable_date', service_date)
+            .eq('reason', 'Maintenance');
+
+        // Step 4: check if any remaining maintenance logs exist for this vehicle
+        const { data: remaining } = await supabase
+            .from('maintenance_logs')
+            .select('id')
+            .eq('vehicle_id', vehicle_id);
+
+        // Step 5: if no more logs, restore vehicle to 'available'
+        if (!remaining || remaining.length === 0) {
+            await supabase
+                .from('vehicles')
+                .update({ status: 'available' })
+                .eq('id', vehicle_id)
+                .eq('status', 'maintenance'); // only if it's still in maintenance
+        }
     },
 
     // ── Availability Calendar ────────────────────────────────────────
@@ -108,37 +172,4 @@ export const maintenanceService = {
             .eq('id', id);
         if (error) throw error;
     },
-
-    // Auto-populate calendar from existing bookings
-    async syncCalendarFromBookings() {
-        const { data: bookings, error } = await supabase
-            .from('bookings')
-            .select('vehicle_id, start_date, end_date, status')
-            .in('status', ['confirmed', 'active', 'pending']);
-
-        if (error) throw error;
-
-        const entries = [];
-        for (const b of bookings || []) {
-            const start = new Date(b.start_date);
-            const end = new Date(b.end_date);
-            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                entries.push({
-                    vehicle_id: b.vehicle_id,
-                    unavailable_date: d.toISOString().split('T')[0],
-                    reason: 'Booked',
-                });
-            }
-        }
-
-        if (entries.length === 0) return [];
-
-        const { data, error: insertError } = await supabase
-            .from('availability_calendar')
-            .upsert(entries, { onConflict: 'vehicle_id,unavailable_date', ignoreDuplicates: true })
-            .select();
-
-        if (insertError) throw insertError;
-        return data;
-    }
 };

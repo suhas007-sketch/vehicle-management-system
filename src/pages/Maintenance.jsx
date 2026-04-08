@@ -262,16 +262,39 @@ export default function Maintenance() {
         }
     }, []);
 
+    // Silent refresh — does NOT trigger loading skeleton (used after mutations)
+    const silentRefresh = useCallback(async () => {
+        try {
+            const [logsData, calData, vehiclesData] = await Promise.all([
+                maintenanceService.getAllLogs(),
+                maintenanceService.getCalendar(),
+                vehicleService.getAll(),
+            ]);
+            setLogs(logsData);
+            setCalendar(calData);
+            setVehicles(vehiclesData);
+        } catch (err) {
+            console.error('[silentRefresh]', err);
+        }
+    }, []);
+
     useEffect(() => { fetchAll(); }, [fetchAll]);
 
-    const handleDeleteLog = async (id) => {
-        if (!window.confirm('Delete this maintenance log?')) return;
+    const [deletingLogId, setDeletingLogId] = useState(null);
+
+    const handleDeleteLog = async (log) => {
+        // log = full log object so we can show vehicle name in toast
+        if (!window.confirm(`Delete maintenance log for "${log.vehicle_name}" on ${log.service_date}?\nThis will also unblock that date in the Availability Calendar and restore vehicle status to Available.`)) return;
+        setDeletingLogId(log.id);
         try {
-            await maintenanceService.deleteLog(id);
-            toast.success('Log deleted');
-            fetchAll();
+            await maintenanceService.deleteLog(log.id);
+            toast.success(`Log deleted — calendar & vehicle status updated`);
+            await silentRefresh(); // refresh both tabs without loading flash
         } catch (err) {
-            toast.error('Failed to delete log');
+            console.error(err);
+            toast.error('Failed to delete log: ' + err.message);
+        } finally {
+            setDeletingLogId(null);
         }
     };
 
@@ -279,7 +302,7 @@ export default function Maintenance() {
         try {
             await maintenanceService.removeUnavailableDate(id);
             toast.success('Date unblocked');
-            fetchAll();
+            await silentRefresh();
         } catch (err) {
             toast.error('Failed to remove entry');
         }
@@ -456,11 +479,15 @@ export default function Maintenance() {
                                             </td>
                                             <td className="py-6 px-8">
                                                 <button
-                                                    onClick={() => handleDeleteLog(log.id)}
-                                                    className="p-2.5 rounded-xl text-textMuted hover:text-red-400 hover:bg-red-400/10 border border-white/10 transition-all"
-                                                    title="Delete log"
+                                                    onClick={() => handleDeleteLog(log)}
+                                                    disabled={deletingLogId === log.id}
+                                                    className="p-2.5 rounded-xl text-textMuted hover:text-red-400 hover:bg-red-400/10 border border-white/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    title="Delete log & unblock calendar"
                                                 >
-                                                    <Trash2 className="w-4 h-4" />
+                                                    {deletingLogId === log.id
+                                                        ? <div className="w-4 h-4 border-2 border-red-400/40 border-t-red-400 rounded-full animate-spin" />
+                                                        : <Trash2 className="w-4 h-4" />
+                                                    }
                                                 </button>
                                             </td>
                                         </tr>

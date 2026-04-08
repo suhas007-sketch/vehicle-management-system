@@ -81,6 +81,9 @@ export const vehicleService = {
     },
 
     async updateStatus(id, status) {
+        const today = new Date().toISOString().split('T')[0];
+
+        // 1. Update vehicle status
         const { data, error } = await supabase
             .from('vehicles')
             .update({ status })
@@ -91,6 +94,25 @@ export const vehicleService = {
             console.error('[vehicleService.updateStatus] Error:', error);
             throw error;
         }
+
+        // 2. Sync availability_calendar
+        if (status === 'maintenance') {
+            // Block today's date for this vehicle in the calendar
+            await supabase
+                .from('availability_calendar')
+                .upsert(
+                    [{ vehicle_id: id, unavailable_date: today, reason: 'Maintenance' }],
+                    { onConflict: 'vehicle_id,unavailable_date', ignoreDuplicates: true }
+                );
+        } else if (status === 'available') {
+            // Remove ALL 'Maintenance' calendar entries for this vehicle
+            await supabase
+                .from('availability_calendar')
+                .delete()
+                .eq('vehicle_id', id)
+                .eq('reason', 'Maintenance');
+        }
+
         return data?.[0] ?? null;
     },
 
