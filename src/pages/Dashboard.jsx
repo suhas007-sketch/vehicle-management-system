@@ -1,126 +1,209 @@
-import React from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Car, CreditCard, CalendarRange, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect, useContext, useCallback } from 'react';
+import { Car, Calendar, IndianRupee, Users, Activity, Shield, TrendingUp, Plus } from 'lucide-react';
+import { AuthContext } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import PageTransition from '../components/layout/PageTransition';
-
-const data = [
-  { name: 'Mon', revenue: 4000 },
-  { name: 'Tue', revenue: 3000 },
-  { name: 'Wed', revenue: 2000 },
-  { name: 'Thu', revenue: 2780 },
-  { name: 'Fri', revenue: 1890 },
-  { name: 'Sat', revenue: 2390 },
-  { name: 'Sun', revenue: 3490 },
-];
-
-const kpiData = [
-  { title: 'Total Vehicles', value: '142', icon: Car, trend: '+12%' },
-  { title: 'Active Rentals', value: '89', icon: CalendarRange, trend: '+5%' },
-  { title: 'Revenue', value: '$24,500', icon: CreditCard, trend: '+18%' },
-  { title: 'Availability', value: '92%', icon: TrendingUp, trend: '+2%' },
-];
-
-const recentBookings = [
-  { id: 'BK-1024', customer: 'Alex Johnson', vehicle: 'Tesla Model S', date: 'Oct 12', status: 'Active' },
-  { id: 'BK-1025', customer: 'Sarah Connor', vehicle: 'Porsche 911', date: 'Oct 14', status: 'Pending' },
-  { id: 'BK-1026', customer: 'John Smith', vehicle: 'BMW M4', date: 'Oct 15', status: 'Active' },
-  { id: 'BK-1027', customer: 'Emma Watson', vehicle: 'Mercedes G-Class', date: 'Oct 10', status: 'Completed' },
-];
+import VehicleModal from '../components/ui/VehicleModal';
+import BookingModal from '../components/ui/BookingModal';
+import { DashboardSkeleton } from '../components/ui/SkeletonLoaders';
+import { vehicleService } from '../services/vehicleService';
+import { bookingService } from '../services/bookingService';
+import { profileService } from '../services/profileService';
+import { formatINR } from '../lib/formatters';
 
 export default function Dashboard() {
-  return (
-    <PageTransition className="space-y-8">
-      {/* Hero / Welcome */}
-      <div className="relative rounded-3xl overflow-hidden glass p-10 mt-2">
-        <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent pointer-events-none" />
-        <div className="relative z-10">
-          <h1 className="text-4xl font-bold tracking-tight mb-4">Good morning, Admin.</h1>
-          <p className="text-textMuted max-w-xl text-lg mb-6">Here is what's happening with your fleet today. Revenue is up 18% from last week, keep it up!</p>
-          <div className="flex gap-4">
-            <Button>Add Vehicle</Button>
-            <Button variant="outline">New Booking</Button>
-          </div>
-        </div>
-      </div>
+    const { user } = useContext(AuthContext);
+    const [stats, setStats] = useState({ totalVehicles: 0, activeBookings: 0, totalRevenue: 0, totalCustomers: 0 });
+    const [recentBookings, setRecentBookings] = useState([]);
+    const [isSynced, setIsSynced] = useState(true);
+    const [lastSync, setLastSync] = useState(new Date().toLocaleTimeString());
+    const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
+    const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+    const [loading, setLoading] = useState(true);
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {kpiData.map((kpi, i) => (
-          <Card key={i} hover>
-            <CardContent className="p-6">
-              <div className="flex justify-between items-start mb-4">
-                <div className="p-3 bg-surface rounded-xl flex items-center justify-center">
-                  <kpi.icon className="w-6 h-6 text-primary" />
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [vehicles, bookings, users] = await Promise.all([
+                vehicleService.getAll(),
+                bookingService.getAll(),
+                profileService.getAll()
+            ]);
+
+            setStats({
+                totalVehicles: (vehicles || []).length,
+                activeBookings: (bookings || []).filter(b => b.status === 'confirmed').length,
+                totalRevenue: (bookings || []).reduce((sum, b) => sum + (b.total_price || 0), 0),
+                totalCustomers: (users || []).length
+            });
+
+            setRecentBookings((bookings || []).slice(0, 5));
+            setIsSynced(true);
+            setLastSync(new Date().toLocaleTimeString());
+        } catch (error) {
+            console.error('Dashboard sync error', error);
+            setIsSynced(false);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
+    if (loading) return <DashboardSkeleton />;
+
+    return (
+        <PageTransition className="space-y-12">
+            {/* Hero Section / Greeting */}
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
+                <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                        <div className="h-[2px] w-12 bg-primary shadow-glow" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.5em] text-primary italic">Operational Command Center</span>
+                    </div>
+                    <h1 className="text-6xl font-black italic uppercase tracking-tighter text-textMain leading-none">
+                        Welcome, <span className="text-primary">{user?.name?.split(' ')[0] || 'Operator'}</span>
+                    </h1>
+                    <div className="flex items-center gap-4">
+                        <p className="text-textMuted font-bold text-sm uppercase tracking-[0.3em] opacity-40">System Node: <span className="text-textMain">VRMS.IND.ALPHA-01</span></p>
+                        <div className="h-4 w-[1px] bg-white/10" />
+                        <p className={`text-[10px] font-black uppercase tracking-widest ${isSynced ? 'text-green-500' : 'text-red-500'} italic animate-pulse`}>
+                            {isSynced ? 'Synced • ' + lastSync : 'Sync Offline'}
+                        </p>
+                    </div>
                 </div>
-                <span className="text-green-400 text-sm font-medium bg-green-400/10 px-2 py-1 rounded-full">{kpi.trend}</span>
-              </div>
-              <p className="text-textMuted text-sm font-medium">{kpi.title}</p>
-              <h4 className="text-3xl font-bold mt-1 text-textMain">{kpi.value}</h4>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Charts & Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Revenue Overview</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} dy={10} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} dx={-10} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#f8fafc' }}
-                  />
-                  <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Bookings</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border/50">
-              {recentBookings.map((booking) => (
-                <div key={booking.id} className="p-5 flex justify-between items-center hover:bg-surface/50 transition-colors cursor-pointer">
-                  <div>
-                    <h5 className="font-medium text-textMain">{booking.customer}</h5>
-                    <p className="text-sm text-textMuted">{booking.vehicle}</p>
-                  </div>
-                  <div className="text-right flex flex-col justify-end items-end">
-                    <p className="text-sm text-textMuted mb-1">{booking.date}</p>
-                    <span className={`text-xs px-2 py-1 rounded-full w-fit ${
-                      booking.status === 'Active' ? 'bg-primary/10 text-primary' : 
-                      booking.status === 'Pending' ? 'bg-amberLight/10 text-amberLight' : 
-                      'bg-green-400/10 text-green-400'
-                    }`}>
-                      {booking.status}
-                    </span>
-                  </div>
+                
+                <div className="flex items-center gap-6 bg-white/[0.02] border border-white/5 rounded-[32px] p-2 pr-8 shadow-2xl">
+                    <div className="w-16 h-16 rounded-3xl bg-surface flex items-center justify-center border border-white/5 shadow-inner">
+                        <Activity className={`w-6 h-6 ${isSynced ? 'text-primary' : 'text-red-500'} animate-pulse`} />
+                    </div>
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-textMuted mb-1 opacity-50">Supabase Node</p>
+                        <p className={`text-lg font-black italic tracking-widest ${isSynced ? 'text-green-500' : 'text-red-500'}`}>
+                            {isSynced ? 'OPTIMIZED' : 'ERROR: CHECK CONFIG'}
+                        </p>
+                    </div>
                 </div>
-              ))}
             </div>
-          </CardContent>
-        </Card>
-      </div>
-    </PageTransition>
-  );
+
+
+            {/* Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                {[
+                    { label: 'Fleet Assets', value: stats.totalVehicles, icon: Car, color: 'text-primary' },
+                    { label: 'Active Rents', value: stats.activeBookings, icon: Calendar, color: 'text-accent' },
+                    { label: 'Gross Revenue', value: formatINR(stats.totalRevenue), icon: IndianRupee, color: 'text-green-500' },
+                    { label: 'Client Census', value: stats.totalCustomers, icon: Users, color: 'text-purple-500' }
+                ].map((stat, i) => (
+                    <Card key={i} className="bg-surface-dark/40 border-white/5 overflow-hidden group hover:border-primary/20 transition-all rounded-[40px] shadow-2xl relative">
+                        <CardContent className="p-10">
+                            <div className="flex justify-between items-start mb-8">
+                                <div className={`p-5 rounded-2xl bg-white/[0.02] border border-white/5 group-hover:scale-110 transition-transform ${stat.color} shadow-2xl`}>
+                                    <stat.icon className="w-7 h-7" />
+                                </div>
+                                <div className="text-[10px] font-black text-textMuted uppercase tracking-widest opacity-20 italic">MTRIC.0{i+1}</div>
+                            </div>
+                            <h3 className="text-4xl font-black text-textMain tracking-tighter mb-2 italic leading-none">{stat.value}</h3>
+                            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-textMuted opacity-50">{stat.label}</p>
+                            
+                            <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-white/[0.01] rounded-full group-hover:bg-primary/5 transition-all duration-1000" />
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                {/* Deployment Log Feed */}
+                <Card className="lg:col-span-2 bg-surface-dark border-white/5 rounded-[48px] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden">
+                    <CardHeader className="p-12 border-b border-white/5 flex flex-col sm:flex-row items-center justify-between gap-6 bg-white/[0.01]">
+                        <div>
+                            <CardTitle className="text-2xl font-black italic uppercase tracking-tight">Deployment Log</CardTitle>
+                            <p className="text-[10px] text-textMuted font-black uppercase tracking-[0.4em] mt-2 opacity-50">Real-time Node Synchronized</p>
+                        </div>
+                        <Button variant="ghost" className="h-12 px-8 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-all">Download Log</Button>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                        <div className="divide-y divide-white/5">
+                            {recentBookings.length === 0 ? (
+                                <div className="py-32 text-center text-textMuted font-black uppercase tracking-[0.5em] text-[10px] animate-pulse">Scanning for data packets...</div>
+                            ) : recentBookings.map((booking) => (
+                                <div key={booking.id} className="p-10 flex items-center justify-between hover:bg-white/[0.02] transition-all group cursor-pointer relative overflow-hidden">
+                                    <div className="flex items-center gap-8 relative z-10">
+                                        <div className="w-16 h-16 rounded-[24px] bg-surface-dark border border-white/10 flex items-center justify-center text-xs font-black text-primary shadow-2xl group-hover:scale-110 transition-transform">
+                                            <Calendar className="w-7 h-7 opacity-50" />
+                                        </div>
+                                        <div>
+                                            <h5 className="font-black text-lg text-textMain italic uppercase tracking-tighter group-hover:text-primary transition-colors">{booking.customer_name || 'Anonymous User'}</h5>
+                                            <p className="text-[10px] text-textMuted font-black uppercase tracking-[0.3em] mt-1 opacity-40">{booking.vehicle_name || 'Machine Unspecified'}</p>
+                                        </div>
+                                    </div>
+                                    <div className="text-right relative z-10">
+                                        <p className="text-lg font-black text-textMain italic tracking-tight">{formatINR(booking.total_price)}</p>
+                                        <span className={`inline-block mt-2 px-4 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border ${
+                                            booking.status === 'confirmed' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20'
+                                        }`}>
+                                            {booking.status}
+                                        </span>
+                                    </div>
+                                    <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-10 transition-opacity pointer-events-none" />
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* Hub Actions */}
+                <div className="space-y-10">
+                    <Card className="bg-primary/5 border border-primary/20 rounded-[48px] p-12 relative overflow-hidden group shadow-glow-sm">
+                        <div className="absolute top-0 right-0 p-10 opacity-[0.03] group-hover:opacity-10 transition-all duration-1000 rotate-12">
+                            <Activity className="w-48 h-48" />
+                        </div>
+                        <h4 className="text-xs font-black uppercase tracking-[0.4em] text-primary mb-8 italic">Action Interface</h4>
+                        <div className="space-y-5 relative z-10">
+                            <Button className="w-full h-20 rounded-[32px] shadow-glow gap-4 font-black italic uppercase tracking-[0.2em] text-xs" onClick={() => setIsVehicleModalOpen(true)}>
+                                <Plus className="w-6 h-6" /> Add Machine
+                            </Button>
+                            <Button variant="ghost" className="w-full h-20 rounded-[32px] bg-white/[0.03] border border-white/5 hover:bg-white/10 gap-4 font-black italic uppercase tracking-[0.2em] text-xs" onClick={() => window.location.href='/app/vehicles'}>
+                                <TrendingUp className="w-6 h-6 text-accent" /> Fleet Manager
+                            </Button>
+
+                        </div>
+                    </Card>
+
+                    <Card className="bg-[#050505] border border-white/5 rounded-[48px] p-12 shadow-2xl relative overflow-hidden">
+                        <div className="flex items-center gap-4 mb-10">
+                            <Shield className="w-6 h-6 text-primary" />
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.4em] text-textMuted opacity-50">Security Protocol</h4>
+                        </div>
+                        <div className="space-y-8">
+                            <div className="flex justify-between items-center pb-6 border-b border-white/5 group">
+                                <span className="text-sm font-black text-textMuted italic tracking-tight group-hover:text-textMain transition-colors">Encrypted Flux</span>
+                                <span className="text-[9px] font-black text-green-500 uppercase tracking-widest bg-green-500/10 px-3 py-1 rounded-xl border border-green-500/20 shadow-glow-sm">SSL.01</span>
+                            </div>
+                            <div className="flex justify-between items-center pb-6 border-b border-white/5 group">
+                                <span className="text-sm font-black text-textMuted italic tracking-tight group-hover:text-textMain transition-colors">Admin Authority</span>
+                                <span className="text-[9px] font-black text-primary uppercase tracking-widest bg-primary/10 px-3 py-1 rounded-xl border border-primary/20 shadow-glow-sm">ROOT</span>
+                            </div>
+                        </div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 blur-[50px] rounded-full pointer-events-none" />
+                    </Card>
+                </div>
+            </div>
+
+            <VehicleModal 
+                isOpen={isVehicleModalOpen} 
+                onClose={() => setIsVehicleModalOpen(false)} 
+                onVehicleAdded={fetchData} 
+            />
+            
+            <BookingModal 
+                isOpen={isBookingModalOpen} 
+                onClose={() => setIsBookingModalOpen(false)} 
+                onBookingAdded={fetchData} 
+            />
+        </PageTransition>
+    );
 }

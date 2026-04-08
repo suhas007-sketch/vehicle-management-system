@@ -1,18 +1,22 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom';
+import { AuthContext } from '../../context/AuthContext';
 import { LayoutDashboard, Car, CalendarCheck, Users, Settings, LogOut, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'framer-motion';
 
 const navItems = [
-  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { name: 'Vehicles', path: '/vehicles', icon: Car },
-  { name: 'Bookings', path: '/bookings', icon: CalendarCheck },
-  { name: 'Customers', path: '/customers', icon: Users },
-  { name: 'Settings', path: '/settings', icon: Settings },
+  { name: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
+  { name: 'Vehicles', path: '/app/vehicles', icon: Car },
+  { name: 'Bookings', path: '/app/bookings', icon: CalendarCheck },
+  { name: 'Customers', path: '/app/customers', icon: Users },
+  { name: 'Settings', path: '/app/settings', icon: Settings },
 ];
 
+
 export default function Sidebar() {
+  const { logout } = useContext(AuthContext);
+  
   return (
     <div className="w-64 h-screen glass border-r border-border fixed left-0 top-0 flex flex-col hidden md:flex z-50">
       <div className="h-20 flex items-center px-6 border-b border-border/50">
@@ -47,7 +51,7 @@ export default function Sidebar() {
       </div>
 
       <div className="p-4 border-t border-border/50">
-        <button className="flex items-center px-4 py-3 w-full text-textMuted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all">
+        <button onClick={logout} className="flex items-center px-4 py-3 w-full text-textMuted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all">
           <LogOut className="w-5 h-5 mr-3" />
           <span className="font-medium">Logout</span>
         </button>
